@@ -8,13 +8,17 @@ from .services import fetch_gender, fetch_age, fetch_country, ExternalAPIError
 from .utils import classify_age
 
 
-# ---------------------------
-# CREATE PROFILE
-# ---------------------------
-class ProfileCreateView(APIView):
+class ProfileView(APIView):
+    """
+    Handles:
+    POST /api/profiles
+    GET  /api/profiles
+    """
+
     def post(self, request):
         name = request.data.get("name")
 
+        # Validate input
         if name is None:
             return Response(
                 {"status": "error", "message": "Missing name"},
@@ -24,76 +28,48 @@ class ProfileCreateView(APIView):
         if not isinstance(name, str):
             return Response(
                 {"status": "error", "message": "Invalid type"},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                status=422
             )
 
         name = name.strip().lower()
 
-        if name == "":
+        if not name:
             return Response(
-                {"status": "error", "message": "Empty name"},
+                {"status": "error", "message": "Missing name"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # ---------------------------
         # Idempotency check
-        # ---------------------------
         existing = Profile.objects.filter(name=name).first()
         if existing:
             return Response({
                 "status": "success",
                 "message": "Profile already exists",
                 "data": ProfileSerializer(existing).data
-            })
+            }, status=status.HTTP_200_OK)
 
-        # ---------------------------
-        # External API calls
-        # ---------------------------
+        # Fetch external APIs
         try:
             gender_data = fetch_gender(name)
             age_data = fetch_age(name)
             country_data = fetch_country(name)
-
         except ExternalAPIError as e:
             return Response(
                 {
                     "status": "error",
                     "message": f"{str(e)} returned an invalid response"
                 },
-                status=status.HTTP_502_BAD_GATEWAY
+                status=502
             )
 
-        # ---------------------------
-        # STRICT VALIDATION (IMPORTANT FOR GRADING)
-        # ---------------------------
-        if not gender_data.get("gender"):
-            return Response(
-                {"status": "error", "message": "Genderize returned an invalid response"},
-                status=status.HTTP_502_BAD_GATEWAY
-            )
-
-        if age_data.get("age") is None:
-            return Response(
-                {"status": "error", "message": "Agify returned an invalid response"},
-                status=status.HTTP_502_BAD_GATEWAY
-            )
-
-        if not country_data:
-            return Response(
-                {"status": "error", "message": "Nationalize returned an invalid response"},
-                status=status.HTTP_502_BAD_GATEWAY
-            )
-
-        # ---------------------------
-        # CREATE PROFILE
-        # ---------------------------
         age = age_data["age"]
 
+        # Create profile
         profile = Profile.objects.create(
             name=name,
             gender=gender_data["gender"],
-            gender_probability=gender_data.get("probability", 0),
-            sample_size=gender_data.get("count", 0),
+            gender_probability=gender_data["probability"],
+            sample_size=gender_data["count"],
             age=age,
             age_group=classify_age(age),
             country_id=country_data["country_id"],
@@ -105,45 +81,10 @@ class ProfileCreateView(APIView):
             "data": ProfileSerializer(profile).data
         }, status=status.HTTP_201_CREATED)
 
-
-# ---------------------------
-# SINGLE PROFILE
-# ---------------------------
-class ProfileDetailView(APIView):
-    def get(self, request, pk):
-        try:
-            profile = Profile.objects.get(pk=pk)
-        except Profile.DoesNotExist:
-            return Response(
-                {"status": "error", "message": "Profile not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        return Response({
-            "status": "success",
-            "data": ProfileSerializer(profile).data
-        })
-
-    def delete(self, request, pk):
-        try:
-            profile = Profile.objects.get(pk=pk)
-        except Profile.DoesNotExist:
-            return Response(
-                {"status": "error", "message": "Profile not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        profile.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-# ---------------------------
-# LIST + FILTER
-# ---------------------------
-class ProfileListView(APIView):
     def get(self, request):
         qs = Profile.objects.all()
 
+        # Filters (case-insensitive)
         gender = request.GET.get("gender")
         country_id = request.GET.get("country_id")
         age_group = request.GET.get("age_group")
@@ -161,4 +102,38 @@ class ProfileListView(APIView):
             "status": "success",
             "count": qs.count(),
             "data": ProfileListSerializer(qs, many=True).data
-        })
+        }, status=status.HTTP_200_OK)
+
+
+class ProfileDetailView(APIView):
+    """
+    Handles:
+    GET /api/profiles/{id}
+    DELETE /api/profiles/{id}
+    """
+
+    def get(self, request, pk):
+        try:
+            profile = Profile.objects.get(pk=pk)
+        except Profile.DoesNotExist:
+            return Response(
+                {"status": "error", "message": "Profile not found"},
+                status=404
+            )
+
+        return Response({
+            "status": "success",
+            "data": ProfileSerializer(profile).data
+        }, status=status.HTTP_200_OK)
+
+    def delete(self, request, pk):
+        try:
+            profile = Profile.objects.get(pk=pk)
+        except Profile.DoesNotExist:
+            return Response(
+                {"status": "error", "message": "Profile not found"},
+                status=404
+            )
+
+        profile.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
