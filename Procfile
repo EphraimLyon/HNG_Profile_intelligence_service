@@ -1,0 +1,1 @@
+web: gunicorn intelligence_api.wsgi:application
